@@ -2,8 +2,6 @@
 
 **AI-assisted fraud investigation platform for cybercrime investigators.**
 
-Built for the Karnataka Cybercrime Department (CIDECODE) Hackathon — powered by Google Gemma.
-
 > Money doesn't disappear in cyber fraud — it moves. Through five, ten, sometimes fifteen mule accounts in minutes. TraceRoot turns that invisible trail into a visual, explainable, court-ready case in the time it takes to upload a CSV.
 
 ---
