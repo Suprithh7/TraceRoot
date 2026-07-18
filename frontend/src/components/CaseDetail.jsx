@@ -1,7 +1,9 @@
 import React, { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { ArrowLeft, ArrowRight, FileText, X, Sparkles, ShieldAlert } from "lucide-react";
+import { ArrowLeft, ArrowRight, FileText, X, Sparkles, ShieldAlert, Activity, Download } from "lucide-react";
+import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis, ReferenceLine } from "recharts";
 import { CASES, RISK_META } from "@/data/mockCases";
+import { buildReportHtml } from "@/lib/reportPrint";
 
 const formatMoney = (n, cur = "USD") =>
   new Intl.NumberFormat("en-US", { style: "currency", currency: cur, maximumFractionDigits: 0 }).format(n);
@@ -141,6 +143,25 @@ export const CaseDetail = ({ caseId, onBack }) => {
           </div>
         </section>
 
+        {/* Velocity timeline */}
+        <section className="border border-white/10 rounded-2xl bg-white/[0.015] p-6 sm:p-8" data-testid="velocity-timeline">
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-2">
+              <Activity className="w-4 h-4 text-white/60" />
+              <h2 className="text-lg font-semibold tracking-tight">Transaction velocity · 24h</h2>
+            </div>
+            <span className="text-[10px] font-mono uppercase tracking-widest text-white/40">
+              tx / hour · Δ from baseline
+            </span>
+          </div>
+          <VelocityChart data={c.velocity} risk={c.risk} />
+          <div className="mt-3 grid grid-cols-3 gap-4 text-[11px] font-mono">
+            <VelocityStat label="Peak" value={Math.max(...c.velocity.map((p) => p.tx)).toFixed(1)} suffix="tx/h" />
+            <VelocityStat label="Avg (24h)" value={(c.velocity.reduce((s, p) => s + p.tx, 0) / c.velocity.length).toFixed(1)} suffix="tx/h" />
+            <VelocityStat label="Baseline" value="4.5" suffix="tx/h" />
+          </div>
+        </section>
+
         {/* Two column: breakdown + AI summary */}
         <section className="grid grid-cols-1 lg:grid-cols-5 gap-6">
           {/* Breakdown */}
@@ -274,9 +295,22 @@ export const CaseDetail = ({ caseId, onBack }) => {
                 </button>
                 <button
                   data-testid="download-report-button"
-                  onClick={() => setReportOpen(false)}
-                  className="rounded-full bg-white text-black px-5 py-2 text-sm font-medium hover:bg-white/90 transition-colors"
+                  onClick={() => {
+                    const html = buildReportHtml(c, meta);
+                    const w = window.open("", "_blank", "width=900,height=1000");
+                    if (!w) return;
+                    w.document.open();
+                    w.document.write(html);
+                    w.document.close();
+                    w.focus();
+                    // Give the new window a tick to render, then trigger print
+                    setTimeout(() => {
+                      try { w.print(); } catch (e) { /* noop */ }
+                    }, 350);
+                  }}
+                  className="rounded-full bg-white text-black px-5 py-2 text-sm font-medium hover:bg-white/90 transition-colors flex items-center gap-2"
                 >
+                  <Download className="w-4 h-4" />
                   Download PDF
                 </button>
               </div>
@@ -294,3 +328,68 @@ const ReportField = ({ label, value }) => (
     <div className="text-sm text-white/90">{value}</div>
   </div>
 );
+
+const VelocityStat = ({ label, value, suffix }) => (
+  <div className="border border-white/10 rounded-xl px-3 py-2 bg-white/[0.02]">
+    <div className="text-[9px] uppercase tracking-widest text-white/40">{label}</div>
+    <div className="text-sm text-white/90 mt-0.5">
+      {value}
+      <span className="text-white/40 ml-1">{suffix}</span>
+    </div>
+  </div>
+);
+
+const VelocityChart = ({ data, risk }) => {
+  const stroke =
+    risk === "freeze" ? "#f87171" : risk === "monitor" ? "#fbbf24" : "#34d399";
+  const gradId = `vel-${risk}`;
+  return (
+    <div className="h-40 w-full" data-testid="velocity-chart">
+      <ResponsiveContainer width="100%" height="100%">
+        <AreaChart data={data} margin={{ top: 8, right: 8, left: -20, bottom: 0 }}>
+          <defs>
+            <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor={stroke} stopOpacity={0.5} />
+              <stop offset="100%" stopColor={stroke} stopOpacity={0} />
+            </linearGradient>
+          </defs>
+          <XAxis
+            dataKey="hour"
+            tick={{ fill: "rgba(255,255,255,0.35)", fontSize: 10, fontFamily: "monospace" }}
+            tickLine={false}
+            axisLine={{ stroke: "rgba(255,255,255,0.08)" }}
+            tickFormatter={(v) => (v === 0 ? "now" : `${v}h`)}
+            interval={3}
+          />
+          <YAxis
+            tick={{ fill: "rgba(255,255,255,0.35)", fontSize: 10, fontFamily: "monospace" }}
+            tickLine={false}
+            axisLine={false}
+            width={40}
+          />
+          <ReferenceLine y={4.5} stroke="rgba(255,255,255,0.15)" strokeDasharray="3 3" />
+          <Tooltip
+            contentStyle={{
+              background: "#0a0a0a",
+              border: "1px solid rgba(255,255,255,0.12)",
+              borderRadius: "10px",
+              fontSize: "12px",
+              fontFamily: "monospace",
+            }}
+            labelStyle={{ color: "rgba(255,255,255,0.5)" }}
+            itemStyle={{ color: stroke }}
+            labelFormatter={(v) => (v === 0 ? "now" : `${v}h ago`)}
+            formatter={(v) => [`${v} tx/h`, "velocity"]}
+          />
+          <Area
+            type="monotone"
+            dataKey="tx"
+            stroke={stroke}
+            strokeWidth={2}
+            fill={`url(#${gradId})`}
+          />
+        </AreaChart>
+      </ResponsiveContainer>
+    </div>
+  );
+};

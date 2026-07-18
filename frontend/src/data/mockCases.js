@@ -1,5 +1,35 @@
 // Hardcoded mock fraud cases for TraceRoot demo
-export const CASES = [
+
+// Deterministic pseudo-random so charts are stable across renders.
+const seeded = (seed) => {
+  let s = seed;
+  return () => {
+    s = (s * 9301 + 49297) % 233280;
+    return s / 233280;
+  };
+};
+
+// Build a 24-hour velocity series ending at reportedAt.
+// Freeze cases get a sharp spike near the end; monitor gets a bump; safe stays flat.
+const buildVelocity = (risk, seedNum) => {
+  const rand = seeded(seedNum);
+  const base = risk === "safe" ? 4 : risk === "monitor" ? 6 : 5;
+  const points = [];
+  for (let i = 0; i < 24; i++) {
+    let v = base + rand() * 3;
+    if (risk === "freeze") {
+      // Sharp spike in last 4 hours
+      if (i >= 20) v = 18 + (i - 19) * 12 + rand() * 6;
+      else if (i >= 18) v = 8 + rand() * 4;
+    } else if (risk === "monitor") {
+      if (i >= 21) v = 12 + rand() * 6;
+    }
+    points.push({ hour: i - 23, tx: Math.round(v * 10) / 10 });
+  }
+  return points;
+};
+
+const rawCases = [
   {
     id: "TR-2410-8891",
     subject: "Anonymous complainant #4471",
@@ -120,6 +150,11 @@ export const CASES = [
     ],
   },
 ];
+
+export const CASES = rawCases.map((c, i) => ({
+  ...c,
+  velocity: buildVelocity(c.risk, 1000 + i * 137),
+}));
 
 export const RISK_META = {
   freeze: {
