@@ -1,50 +1,98 @@
-# TraceRoot — AI Fraud Investigation Dashboard (Demo)
+# TraceRoot — AI Fraud Investigation Platform
 
 ## Original Problem Statement
-Build a web app called "TraceRoot" — an AI fraud investigation dashboard demo for
-cybercrime investigators. Dark theme, professional, no backend, all data hardcoded.
-Pages: Login → Dashboard (case list) → Case Detail (chain diagram + risk breakdown +
-AI summary + Generate Report modal).
+Production-grade full-stack fraud investigation platform for cybercrime investigators,
+built as a real modular application (ingestion → risk scoring → graph builder →
+Gemma orchestrator → recommendation engine → PDF report generator), following the
+exact architecture and folder structure in the brief.
 
-## Architecture
-- Pure frontend React SPA (no backend, no MongoDB used).
-- View switching via local `useState` in `App.js` (no react-router needed for 3 views).
-- Hardcoded mock JSON in `/app/frontend/src/data/mockCases.js`.
-- Shader-based animated dot-matrix background on login (react-three-fiber + three.js).
-- Framer Motion for enter/exit + list stagger animations.
-- Tailwind + shadcn palette (dark). Lucide icons only, no emoji.
+## User Personas
+- Cybercrime / fraud investigator at a financial institution or law-enforcement agency
+- Financial compliance officer reviewing SAR-worthy cases and freeze recommendations
 
-## User Persona
-- Cybercrime / fraud investigator at a financial institution or agency, reviewing a
-  case queue and drilling into the account chain and risk drivers per case.
+## Adaptations for Emergent Platform
+- **DB**: MongoDB (`motor`) instead of Postgres. Alembic migrations not applicable.
+- **Async jobs**: FastAPI `BackgroundTasks` instead of Redis queue.
+- **LLM**: Gemini 3 Flash via Emergent LLM key (closest hosted Gemma-family model),
+  wrapped behind `gemma_orchestrator.generate()` — swap `_call_llm` to Ollama for
+  on-prem Gemma without touching any other file.
+- **Auth**: Emergent-managed Google OAuth + mocked 6-digit OTP demo flow.
+- **PDF**: ReportLab (no system deps) instead of WeasyPrint.
+- **Frontend**: React 19 + JSX + CRA (template default), not Vite/TS.
 
-## Core Requirements (static)
-1. Login page — email + Sign In, no OTP, no auth.
-2. Dashboard — table of 3–5 sample cases with risk badge (Freeze / Monitor / Safe).
-3. Case detail — chain diagram (Victim → Mule → Cash Out), score breakdown list,
-   AI summary text, Generate Report modal.
+## Backend Layout
+```
+backend/
+  server.py                     # FastAPI entry, mounts routers under /api
+  app/
+    api/
+      auth.py                   # /api/auth/session, /auth/me, /auth/logout
+      cases.py                  # /api/cases (CRUD + CSV upload)
+      case_detail.py            # /api/cases/{id}/risk-scores, /graph, /copilot,
+                                #  /copilot/{kind}, /recommendations, /report
+      seed_route.py             # /api/seed
+    core/
+      config.py                 # env + risk weights + mule watchlist
+      db.py                     # motor client + collection accessors
+    services/
+      ingestion.py              # CSV parsing + validation
+      risk_scoring.py           # 7 explainable, additive rules
+      graph_builder.py          # NetworkX-backed money-flow graph
+      gemma_orchestrator.py     # LLM wrapper (Gemma-swappable)
+      recommendation.py         # per-account Freeze/Monitor/Safe verdicts
+      report_generator.py       # ReportLab court-ready PDF
+    repositories/
+      graph_repository.py       # GraphRepository ABC + NetworkX impl
+    schemas.py                  # Pydantic v2 request/response schemas
+    seed.py                     # 3 realistic mock fraud cases
+  tests/
+    test_risk_scoring.py        # 5 tests
+    test_graph_builder.py       # 3 tests
+    test_api.py                 # 2 tests (10/10 pass)
+```
+
+## Frontend Layout
+```
+frontend/
+  src/
+    components/
+      SignInPage.jsx            # Google + mock OTP + shader background
+      Dashboard.jsx             # Real dashboard (sidebar, cases, ingest panel, seed)
+      CanvasRevealEffect.jsx    # GLSL dot-matrix shader (login only)
+      CaseDetail.jsx            # (legacy demo detail, unused by real flow)
+    features/
+      auth/{AuthCallback,ProtectedRoute}.jsx
+      dashboard/{CaseWorkspace,DemoDashboard}.jsx
+      graph/CaseGraph.jsx       # Cytoscape.js money-flow graph
+      copilot/CopilotPanel.jsx  # AI copilot tabs + EN/HI/TA language switch
+      timeline/CaseTimeline.jsx # Vertical event timeline
+    lib/{api,auth,reportPrint}.js/jsx
+    data/mockCases.js           # Legacy demo data (used by DemoDashboard only)
+```
 
 ## What's Implemented (2026-02-18)
-- Login (`SignInPage.jsx`) with animated dot-matrix shader, brand mark, transition
-  animation on submit.
-- Dashboard (`Dashboard.jsx`) with 5 hardcoded cases, stats cards (open / freeze /
-  monitor / frozen exposure), filter pills (All / Freeze / Monitor / Safe), sortable
-  table with pulsing risk dots, sign-out.
-- Case detail (`CaseDetail.jsx`) with:
-  - Fund-flow chain (2–4 node horizontal boxes with color-coded tags & arrows).
-  - Risk breakdown list with per-signal meta and total /100.
-  - AI investigator summary with model tag and hashtags.
-  - Generate Report modal with executive summary, fields grid, signals table,
-    Close / Download PDF buttons.
-- All `data-testid` attributes added to interactive elements.
+- Real backend end-to-end: signed-in user can create/delete cases, upload CSV,
+  auto-score, view graph + risk + copilot + timeline + recommendations, download PDF.
+- 7 explainable risk rules (flash drain, structuring, known mule, velocity, cross-border,
+  off-hours, round-dollar) — every factor returns a WHY string, no opaque scoring.
+- Cytoscape graph with role-based shapes (round-rect / diamond / hexagon) and risk colors.
+- LLM copilot returns 4 kinds (summary, report, freeze justification, next steps) in
+  English/Hindi/Tamil, results cached per case/kind/lang in Mongo.
+- ReportLab PDF with case header, risk-colored pill, meta grid, executive summary,
+  chain, signal table, per-account recommendation table.
+- Emergent Google OAuth (real sessions, httpOnly cookies) + mocked OTP for demos.
+- 3 realistic seeded fraud cases (flash-drain PH mule ring, elder-fraud HK wire, retail safe).
+- 10 pytest unit tests, all passing.
 
-## Data
-5 realistic cases with varied risk profiles (US→PH mule ring, elder fraud US→HK,
-SMB BEC, retail safe, payroll direct-deposit hijack).
+## Environment
+Everything env-driven: `MONGO_URL`, `DB_NAME`, `CORS_ORIGINS`, `EMERGENT_LLM_KEY`
+(backend); `REACT_APP_BACKEND_URL` (frontend). `.env.example` provided for backend.
 
 ## Backlog / Next
-- P1: Add a mini timeline / activity chart on case detail (Recharts).
-- P1: Case search + column sorting on dashboard.
-- P2: Export report as actual PDF (currently mock).
-- P2: Optional real LLM summary via Emergent LLM key.
-- P2: Multi-case comparison view.
+- P1: SSE streaming for LLM copilot (`stream_message`) so tokens arrive live.
+- P1: WebSocket case-updates channel (multiple analysts on one case).
+- P2: Real Google auth flow tested in-browser (currently verified via cookie injection).
+- P2: Multi-user case sharing / RBAC.
+- P2: Neo4j swap-in for `GraphRepository` when case volume outgrows in-memory NetworkX.
+- P2: WeasyPrint as an optional richer PDF renderer.
+- P2: Ingestion job queue (Redis + Celery) once workloads are large enough to matter.
