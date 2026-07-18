@@ -99,6 +99,7 @@ export const api = {
     return () => ctrl.abort();
   },
   reportUrl: (id) => `${API}/cases/${id}/report`,
+  auditExportUrl: (id, format) => `${API}/cases/${id}/audit/export?format=${format}`,
 
   // Sharing + audit
   listShares: (id) => req(`/cases/${id}/shares`),

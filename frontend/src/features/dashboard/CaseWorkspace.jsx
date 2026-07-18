@@ -1,14 +1,15 @@
 // Case workspace: header + tabs (Graph, Risk, Copilot, Timeline, Recs) + PDF download.
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { ArrowLeft, Download, ShieldAlert, Sparkles, Activity, Network, ClipboardCheck, Loader2, Users, ClipboardList } from "lucide-react";
+import { ArrowLeft, Download, ShieldAlert, Sparkles, Activity, Network, ClipboardCheck, Loader2, Users, ClipboardList, Wifi, WifiOff } from "lucide-react";
 import { api } from "@/lib/api";
 import { CaseGraph } from "@/features/graph/CaseGraph";
 import { CopilotPanel } from "@/features/copilot/CopilotPanel";
 import { CaseTimeline } from "@/features/timeline/CaseTimeline";
 import { SharingPanel } from "@/features/sharing/SharingPanel";
 import { AuditPanel } from "@/features/audit/AuditPanel";
+import { useCaseWebSocket } from "@/lib/useCaseWebSocket";
 
 const RISK_META = {
   freeze:  { label: "Freeze Immediately", chip: "bg-red-500/10 border-red-500/30 text-red-300", text: "text-red-300", dot: "bg-red-400" },
@@ -23,25 +24,43 @@ export const CaseWorkspace = () => {
   const navigate = useNavigate();
   const [tab, setTab] = useState("graph");
   const [state, setState] = useState({ loading: true });
+  const [liveNotice, setLiveNotice] = useState(null);
 
-  useEffect(() => {
-    let alive = true;
-    (async () => {
-      try {
-        const [c, r, g, t, recs] = await Promise.all([
-          api.getCase(caseId),
-          api.getRisk(caseId),
-          api.getGraph(caseId),
-          api.getTransactions(caseId),
-          api.getRecommendations(caseId),
-        ]);
-        if (alive) setState({ loading: false, case: c, risk: r, graph: g, txs: t, recs });
-      } catch (e) {
-        if (alive) setState({ loading: false, error: e.message });
-      }
-    })();
-    return () => { alive = false; };
+  const refetch = useCallback(async () => {
+    try {
+      const [c, r, g, t, recs] = await Promise.all([
+        api.getCase(caseId), api.getRisk(caseId), api.getGraph(caseId),
+        api.getTransactions(caseId), api.getRecommendations(caseId),
+      ]);
+      setState((prev) => ({ ...prev, loading: false, case: c, risk: r, graph: g, txs: t, recs }));
+    } catch (e) {
+      setState((prev) => ({ ...prev, loading: false, error: e.message }));
+    }
   }, [caseId]);
+
+  useEffect(() => { refetch(); }, [refetch]);
+
+  const handleWsEvent = useCallback((evt) => {
+    if (!evt?.event || evt.event === "connected") return;
+    refetch();
+    const labels = {
+      status_changed:    `Status → ${evt.payload?.to}`,
+      case_rescored:     `Risk rescored · ${evt.payload?.risk} (${evt.payload?.risk_score})`,
+      csv_uploaded:      `CSV ingested by ${evt.payload?.by || "someone"} · ${evt.payload?.accepted} tx`,
+      copilot_started:   `AI copilot started (${evt.payload?.kind})`,
+      copilot_finished:  `AI copilot finished (${evt.payload?.kind})`,
+      case_shared:       `Case shared with ${evt.payload?.email}`,
+      case_unshared:     `Access revoked for ${evt.payload?.email}`,
+      report_downloaded: `PDF downloaded by ${evt.payload?.by || "someone"}`,
+    };
+    const msg = labels[evt.event];
+    if (msg) {
+      setLiveNotice(msg);
+      setTimeout(() => setLiveNotice(null), 4000);
+    }
+  }, [refetch]);
+
+  const { connected, polling } = useCaseWebSocket(caseId, handleWsEvent, refetch);
 
   if (state.loading) {
     return (
@@ -91,11 +110,37 @@ export const CaseWorkspace = () => {
             <ArrowLeft className="w-4 h-4" />
             <span className="font-mono uppercase tracking-widest text-xs">Case Queue</span>
           </button>
-          <div className="flex items-center gap-3">
-            <span className="text-[10px] font-mono uppercase tracking-widest text-white/40">Case</span>
-            <span className="text-sm font-mono">{c.case_id.replace("case_", "")}</span>
+          <div className="flex items-center gap-4">
+            <div
+              data-testid="ws-status"
+              title={connected ? "Live updates via WebSocket" : polling ? "WebSocket down — polling every 10s" : "Connecting…"}
+              className={`flex items-center gap-1.5 text-[10px] font-mono uppercase tracking-widest ${
+                connected ? "text-emerald-300" : polling ? "text-amber-300" : "text-white/40"
+              }`}
+            >
+              {connected ? <Wifi className="w-3 h-3" /> : <WifiOff className="w-3 h-3" />}
+              {connected ? "Live" : polling ? "Polling" : "…"}
+            </div>
+            <div className="flex items-center gap-3">
+              <span className="text-[10px] font-mono uppercase tracking-widest text-white/40">Case</span>
+              <span className="text-sm font-mono">{c.case_id.replace("case_", "")}</span>
+            </div>
           </div>
         </div>
+        <AnimatePresence>
+          {liveNotice && (
+            <motion.div
+              key={liveNotice}
+              initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }}
+              className="max-w-[1400px] mx-auto px-6 sm:px-10 pb-3"
+            >
+              <div className="text-xs font-mono text-white/70 border border-white/10 rounded-full px-3 py-1 bg-white/[0.03] inline-flex items-center gap-2">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                {liveNotice}
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </header>
 
       <div className="max-w-[1400px] mx-auto px-6 sm:px-10 py-10 space-y-8">
@@ -174,7 +219,7 @@ export const CaseWorkspace = () => {
                     {graph.nodes.length} accounts · {graph.edges.length} edges · click a node to focus
                   </span>
                 </div>
-                <CaseGraph graph={graph} />
+                <CaseGraph graph={graph} transactions={txs} />
               </section>
             )}
 

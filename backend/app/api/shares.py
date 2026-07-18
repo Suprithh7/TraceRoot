@@ -12,6 +12,7 @@ from pydantic import BaseModel, EmailStr, ConfigDict
 from app.api.auth import current_user
 from app.core.db import get_db, cases_coll
 from app.services import rbac, audit
+from app.services.broadcaster import broadcaster
 
 router = APIRouter(prefix="/cases/{case_id}", tags=["sharing"])
 
@@ -90,6 +91,7 @@ async def remove_share(case_id: str, share_id: str, user: dict = Depends(current
         raise HTTPException(404, "Share not found")
     await db.case_shares.delete_one({"share_id": share_id})
     await audit.record(case_id, user, "case_unshared", {"email": doc["email"]})
+    await broadcaster.broadcast(case_id, "case_unshared", {"email": doc["email"]})
     return {"ok": True}
 
 
@@ -101,6 +103,7 @@ async def change_status(case_id: str, payload: StatusIn, user: dict = Depends(cu
         return {"ok": True, "status": payload.status}
     await cases_coll().update_one({"case_id": case_id}, {"$set": {"status": payload.status}})
     await audit.record(case_id, user, "status_changed", {"from": prev, "to": payload.status})
+    await broadcaster.broadcast(case_id, "status_changed", {"from": prev, "to": payload.status})
     return {"ok": True, "status": payload.status}
 
 
@@ -108,3 +111,36 @@ async def change_status(case_id: str, payload: StatusIn, user: dict = Depends(cu
 async def get_audit(case_id: str, user: dict = Depends(current_user)):
     await rbac.load_case_with_role(case_id, user, "viewer")
     return await audit.list_for_case(case_id)
+
+
+@router.get("/audit/export")
+async def export_audit(
+    case_id: str,
+    format: str = "json",
+    user: dict = Depends(current_user),
+):
+    """format=csv or format=json (signed, tamper-evident)."""
+    from fastapi.responses import Response
+    from app.services import audit_export
+    await rbac.load_case_with_role(case_id, user, "viewer")
+    entries = await audit.list_for_case(case_id, limit=10000)
+
+    if format == "csv":
+        body = audit_export.to_csv(entries)
+        await audit.record(case_id, user, "audit_exported", {"format": "csv"})
+        return Response(
+            content=body, media_type="text/csv",
+            headers={"Content-Disposition":
+                     f'attachment; filename="TraceRoot_audit_{case_id}.csv"'},
+        )
+
+    envelope = audit_export.signed_json(case_id, entries)
+    import json as _json
+    body = _json.dumps(envelope, indent=2, ensure_ascii=False).encode("utf-8")
+    await audit.record(case_id, user, "audit_exported",
+                       {"format": "json_signed", "algorithm": "HMAC-SHA256"})
+    return Response(
+        content=body, media_type="application/json",
+        headers={"Content-Disposition":
+                 f'attachment; filename="TraceRoot_audit_{case_id}.signed.json"'},
+    )

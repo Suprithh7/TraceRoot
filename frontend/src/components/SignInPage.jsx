@@ -237,19 +237,19 @@ export const SignInPage = () => {
                     </svg>
                   </div>
                 </motion.div>
-                {/* Demo: after mock OTP success, drop into the demo dashboard (no real session).
-                    Real users should use Google button above for a real session. */}
+                {/* After mock OTP success, funnel to real Google auth — the OTP
+                    is a design showcase; only Google produces a real session. */}
                 <motion.button
-                  data-testid="continue-to-dashboard"
+                  data-testid="continue-with-google"
                   initial={{ opacity: 0 }} animate={{ opacity: 1 }}
                   transition={{ delay: 0.9 }}
-                  onClick={() => navigate("/demo-dashboard", { state: { email } })}
+                  onClick={goToGoogle}
                   className="w-full rounded-full bg-white text-black font-medium py-3 hover:bg-white/90 transition-colors"
                 >
-                  Enter Demo Dashboard
+                  Continue with Google
                 </motion.button>
                 <p className="text-[11px] text-white/30 font-mono tracking-wide">
-                  For a real session, sign in with Google above.
+                  Real authentication happens via Google — the OTP was a UI demo.
                 </p>
               </motion.div>
             )}

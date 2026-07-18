@@ -6,6 +6,7 @@ from app.api.auth import current_user
 from app.core.db import cases_coll, transactions_coll, risk_coll, get_db
 from app.schemas import Case, CaseCreate, IngestResponse, Transaction
 from app.services import ingestion, risk_scoring, rbac, audit
+from app.services.broadcaster import broadcaster
 import uuid
 
 router = APIRouter(prefix="/cases", tags=["cases"])
@@ -38,6 +39,9 @@ async def _rescore_case(case_id: str) -> None:
             "amount": amount, "tx_count": len(txs),
         }},
     )
+    await broadcaster.broadcast(case_id, "case_rescored", {
+        "risk": bucket, "risk_score": total, "tx_count": len(txs), "amount": amount,
+    })
 
 
 @router.post("", response_model=Case)
@@ -119,6 +123,9 @@ async def upload_csv(
     background.add_task(_rescore_case, case_id)
     await audit.record(case_id, user, "csv_uploaded",
                        {"filename": file.filename, "accepted": resp.accepted, "rejected": len(errors)})
+    await broadcaster.broadcast(case_id, "csv_uploaded",
+                                {"accepted": resp.accepted, "rejected": len(errors),
+                                 "by": user["email"]})
     return IngestResponse(
         case_id=case_id, accepted=resp.accepted,
         rejected=len(errors), errors=errors[:10],

@@ -10,6 +10,7 @@ from app.api import cases as cases_api
 from app.api import case_detail as case_detail_api
 from app.api import shares as shares_api
 from app.api import seed_route
+from app.api import websocket as ws_api
 
 logging.basicConfig(
     level=logging.INFO,
@@ -38,6 +39,7 @@ api_router.include_router(cases_api.router)
 api_router.include_router(case_detail_api.router)
 api_router.include_router(shares_api.router)
 api_router.include_router(seed_route.router)
+api_router.include_router(ws_api.router)  # WebSocket under /api/ws/... for ingress compatibility
 
 app.include_router(api_router)
 

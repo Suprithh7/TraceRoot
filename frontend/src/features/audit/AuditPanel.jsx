@@ -1,6 +1,6 @@
 // Audit log view — chronological list of every action taken on a case.
 import { useEffect, useState } from "react";
-import { ClipboardList, User, Loader2, RefreshCw } from "lucide-react";
+import { ClipboardList, User, Loader2, RefreshCw, FileText, FileJson } from "lucide-react";
 import { api } from "@/lib/api";
 
 const ACTION_LABEL = {
@@ -12,6 +12,7 @@ const ACTION_LABEL = {
   case_shared:        { label: "Case shared",            color: "text-white/80" },
   case_unshared:      { label: "Access revoked",         color: "text-white/60" },
   case_deleted:       { label: "Case deleted",           color: "text-red-300" },
+  audit_exported:     { label: "Audit exported",         color: "text-blue-300" },
 };
 
 const fmtWhen = (iso) => {
@@ -35,6 +36,7 @@ const summarizeMeta = (action, meta) => {
   if (action === "case_unshared") return meta.email || "";
   if (action === "report_downloaded") return `${(meta.bytes / 1024).toFixed(1)} KB`;
   if (action === "case_created") return meta.subject || "";
+  if (action === "audit_exported") return `${meta.format}${meta.algorithm ? ` · ${meta.algorithm}` : ""}`;
   return "";
 };
 
@@ -47,21 +49,37 @@ export const AuditPanel = ({ caseId }) => {
     try { setEntries(await api.getAudit(caseId)); }
     finally { setLoading(false); }
   };
-  useEffect(() => { load(); }, [caseId]);
+  useEffect(() => { load(); }, [caseId]);  // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <section className="border border-white/10 rounded-2xl bg-white/[0.015] p-6" data-testid="audit-panel">
-      <div className="flex items-center gap-2 mb-4">
+      <div className="flex items-center gap-2 mb-4 flex-wrap">
         <ClipboardList className="w-4 h-4 text-white/60" />
         <h2 className="text-lg font-semibold tracking-tight">Audit log</h2>
         <span className="ml-auto text-[10px] font-mono uppercase tracking-widest text-white/40">
           {entries.length} event{entries.length === 1 ? "" : "s"} · court-usable
         </span>
+        <a
+          data-testid="export-audit-csv"
+          href={api.auditExportUrl(caseId, "csv")}
+          className="flex items-center gap-1.5 text-xs text-white/60 hover:text-white border border-white/10 hover:border-white/30 rounded-full px-3 py-1.5 transition-colors"
+          title="Flat CSV — internal review"
+        >
+          <FileText className="w-3.5 h-3.5" /> CSV
+        </a>
+        <a
+          data-testid="export-audit-signed"
+          href={api.auditExportUrl(caseId, "json")}
+          className="flex items-center gap-1.5 text-xs text-white/60 hover:text-white border border-white/10 hover:border-white/30 rounded-full px-3 py-1.5 transition-colors"
+          title="Tamper-evident, HMAC-SHA256 signed"
+        >
+          <FileJson className="w-3.5 h-3.5" /> Signed JSON
+        </a>
         <button
           data-testid="audit-refresh"
           onClick={load}
           disabled={loading}
-          className="ml-2 text-white/50 hover:text-white transition-colors"
+          className="text-white/50 hover:text-white transition-colors"
           title="Refresh"
         >
           {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}

@@ -12,8 +12,9 @@ from app.schemas import (
 )
 from app.services import (
     risk_scoring, graph_builder, gemma_orchestrator, recommendation,
-    report_generator, rbac, audit,
+    report_generator, rbac, audit, audit_export,
 )
+from app.services.broadcaster import broadcaster
 
 router = APIRouter(prefix="/cases/{case_id}", tags=["case-detail"])
 
@@ -103,6 +104,8 @@ async def copilot_stream(case_id: str, req: CopilotRequest, user: dict = Depends
     """SSE stream of copilot tokens. Persists the full result + audits on completion."""
     case, _ = await rbac.load_case_with_role(case_id, user, "analyst")
     ctx = await _build_ctx(case, case_id)
+    await broadcaster.broadcast(case_id, "copilot_started",
+                                {"kind": req.kind, "language": req.language, "by": user["email"], "stream": True})
 
     async def event_gen():
         collected: list[str] = []
@@ -128,6 +131,8 @@ async def copilot_stream(case_id: str, req: CopilotRequest, user: dict = Depends
         )
         await audit.record(case_id, user, "copilot_generated",
                            {"kind": req.kind, "language": req.language, "stream": True})
+        await broadcaster.broadcast(case_id, "copilot_finished",
+                                    {"kind": req.kind, "language": req.language, "stream": True})
         yield f"event: done\ndata: {json.dumps({'text': full_text})}\n\n"
 
     return StreamingResponse(
@@ -176,6 +181,7 @@ async def generate_report(case_id: str, user: dict = Depends(current_user)):
     }
     pdf_bytes = report_generator.build_pdf(pdf_ctx)
     await audit.record(case_id, user, "report_downloaded", {"bytes": len(pdf_bytes)})
+    await broadcaster.broadcast(case_id, "report_downloaded", {"by": user["email"]})
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",

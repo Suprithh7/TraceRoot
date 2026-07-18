@@ -51,6 +51,57 @@ cd backend && pytest -q
 After signing in, click **Seed demo cases** on the dashboard (or `POST /api/seed`)
 to load 3 realistic mock fraud cases.
 
+## Verifying an audit export
+
+The `Signed JSON` export endpoint (`GET /api/cases/{id}/audit/export?format=json`)
+returns an envelope like this:
+
+```json
+{
+  "case_id": "case_...",
+  "generated_at": "2026-02-...Z",
+  "algorithm": "HMAC-SHA256",
+  "entries": [ ... audit entries, sorted by created_at asc ... ],
+  "content_hash": "sha256:<hex>",
+  "signature":    "hmac-sha256:<hex>",
+  "verification": {
+    "canonical_json_algorithm":
+      "json.dumps(sort_keys=True, separators=(',',':'), ensure_ascii=False)",
+    "how_to_verify": "See README section 'Verifying an audit export'."
+  }
+}
+```
+
+To verify tamper-evidence, an investigator (or reviewing court) computes:
+
+```python
+import json, hmac, hashlib
+
+with open("TraceRoot_audit_<case>.signed.json") as f:
+    envelope = json.load(f)
+
+canonical = json.dumps(
+    envelope["entries"], sort_keys=True,
+    separators=(",", ":"), ensure_ascii=False,
+).encode("utf-8")
+
+# 1) Content hash — no shared secret required
+expected_hash = "sha256:" + hashlib.sha256(canonical).hexdigest()
+assert expected_hash == envelope["content_hash"]
+
+# 2) Signature — needs the AUDIT_HMAC_KEY that signed it
+AUDIT_HMAC_KEY = "..."  # shared out-of-band with the reviewer
+expected_sig = "hmac-sha256:" + hmac.new(
+    AUDIT_HMAC_KEY.encode("utf-8"), canonical, hashlib.sha256,
+).hexdigest()
+assert expected_sig == envelope["signature"]
+```
+
+Any change to any entry — reordering, editing metadata, adding a fake row —
+invalidates both hash and signature. The key is loaded from `AUDIT_HMAC_KEY`
+in the backend `.env`; rotate it by exporting a fresh signed JSON before the
+old key is retired.
+
 ## Swapping to local Gemma
 Replace `_call_llm` inside `app/services/gemma_orchestrator.py` with an Ollama
 HTTP call. No other file needs to change — the orchestrator is the only place

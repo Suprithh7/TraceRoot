@@ -103,8 +103,6 @@ export const Dashboard = () => {
         </div>
         <nav className="p-4 space-y-1 text-sm flex-1">
           <SideItem active icon={<FolderOpen className="w-4 h-4" />} label="Cases" />
-          <SideItem icon={<Upload className="w-4 h-4" />} label="Ingest" />
-          <SideItem icon={<Sparkles className="w-4 h-4" />} label="Copilot" />
         </nav>
         <div className="p-4 border-t border-white/10 space-y-2">
           {user && (
