@@ -8,7 +8,7 @@ from app.api.auth import current_user
 from app.core.db import cases_coll, transactions_coll, risk_coll, copilot_coll
 from app.schemas import (
     RiskScore, GraphPayload, CopilotRequest, CopilotResponse,
-    Recommendation,
+    Recommendation, AccountAssessmentRequest, AccountAssessmentResponse,
 )
 from app.services import (
     risk_scoring, graph_builder, gemma_orchestrator, recommendation,
@@ -72,6 +72,63 @@ async def get_graph(case_id: str, user: dict = Depends(current_user)):
     await rbac.load_case_with_role(case_id, user, "viewer")
     txs = await transactions_coll().find({"case_id": case_id}, {"_id": 0}).to_list(10000)
     return graph_builder.build_graph(txs)
+
+
+def _account_assessment_context(account_id: str, txs: list[dict], graph) -> dict:
+    """Build an account-specific, reproducible score and the evidence Gemma sees."""
+    history = [t for t in txs if t["sender"] == account_id or t["receiver"] == account_id]
+    node = next((n for n in graph.nodes if n.id == account_id), None)
+    if node is None:
+        raise HTTPException(404, "Account is not present in this case graph")
+    incoming = [t for t in history if t["receiver"] == account_id]
+    outgoing = [t for t in history if t["sender"] == account_id]
+    evidence: list[str] = [f"{len(history)} case transaction(s) involve this account."]
+    score = 0
+    if account_id in risk_scoring.KNOWN_MULE_ACCOUNTS:
+        score += 35; evidence.append("Account matches the configured mule-account watchlist (+35).")
+    if incoming and outgoing:
+        score += 20; evidence.append("Account both receives and forwards funds in this case (+20).")
+    in_total = sum(float(t["amount"]) for t in incoming)
+    out_total = sum(float(t["amount"]) for t in outgoing)
+    if in_total and out_total >= 0.7 * in_total:
+        score += 20; evidence.append("At least 70% of received value is forwarded onward (+20).")
+    if len(history) >= 4:
+        score += 15; evidence.append("High activity: four or more linked transactions (+15).")
+    if node.risk in {"monitor", "freeze"}:
+        score += 10; evidence.append(f"Graph role/risk is marked {node.risk} (+10).")
+    score = min(100, score)
+    risk = risk_scoring.bucket(score)
+    connections = [
+        {"counterparty": e.target if e.source == account_id else e.source,
+         "direction": "out" if e.source == account_id else "in",
+         "amount": e.amount, "tx_count": e.tx_count,
+         "first_seen": e.first_seen, "last_seen": e.last_seen}
+        for e in graph.edges if e.source == account_id or e.target == account_id
+    ]
+    history_for_prompt = [
+        {"date": t["date"], "direction": "out" if t["sender"] == account_id else "in",
+         "counterparty": t["receiver"] if t["sender"] == account_id else t["sender"],
+         "amount": t["amount"], "description": t.get("description", "")}
+        for t in history
+    ]
+    return {"account_id": account_id, "score": score, "risk": risk, "evidence": evidence,
+            "transactions": history_for_prompt, "connections": connections}
+
+
+@router.post("/account-assessment", response_model=AccountAssessmentResponse)
+async def account_assessment(
+    case_id: str, req: AccountAssessmentRequest, user: dict = Depends(current_user),
+):
+    """Generate a draft explanation for a graph-selected account, never an action."""
+    await rbac.load_case_with_role(case_id, user, "viewer")
+    txs = await transactions_coll().find({"case_id": case_id}, {"_id": 0}).to_list(10000)
+    graph = graph_builder.build_graph(txs)
+    assessment_ctx = _account_assessment_context(req.account_id, txs, graph)
+    result = await gemma_orchestrator.assess_account(assessment_ctx, req.language)
+    await audit.record(case_id, user, "account_assessed", {
+        "account_id": req.account_id, "score": result["score"], "source": result["source"],
+    })
+    return AccountAssessmentResponse(**result)
 
 
 @router.get("/recommendations", response_model=List[Recommendation])

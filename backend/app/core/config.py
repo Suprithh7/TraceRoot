@@ -8,7 +8,10 @@ load_dotenv(ROOT_DIR / ".env")
 
 MONGO_URL = os.environ["MONGO_URL"]
 DB_NAME = os.environ["DB_NAME"]
-EMERGENT_LLM_KEY = os.environ.get("EMERGENT_LLM_KEY", "")
+# Local, on-prem model configuration.  No hosted model key is required for the
+# investigation workflow.
+OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://127.0.0.1:11434").rstrip("/")
+OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "gemma3")
 CORS_ORIGINS = os.environ.get("CORS_ORIGINS", "*").split(",")
 
 # Risk scoring rule weights (explainable, additive).

@@ -117,6 +117,21 @@ class CopilotResponse(BaseModel):
     generated_at: datetime
 
 
+class AccountAssessmentRequest(BaseModel):
+    account_id: str = Field(min_length=1, max_length=200)
+    language: str = "en"
+
+
+class AccountAssessmentResponse(BaseModel):
+    account_id: str
+    score: int = Field(ge=0, le=100)
+    risk: Literal["freeze", "monitor", "safe"]
+    evidence: List[str]
+    explanation: str
+    generated_at: datetime
+    source: Literal["ollama", "local_fallback"]
+
+
 # --- Recommendation ---
 class Recommendation(BaseModel):
     account_id: str
