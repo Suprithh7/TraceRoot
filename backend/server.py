@@ -8,6 +8,7 @@ from app.core.db import close_db
 from app.api import auth as auth_api
 from app.api import cases as cases_api
 from app.api import case_detail as case_detail_api
+from app.api import shares as shares_api
 from app.api import seed_route
 
 logging.basicConfig(
@@ -35,6 +36,7 @@ async def health():
 api_router.include_router(auth_api.router)
 api_router.include_router(cases_api.router)
 api_router.include_router(case_detail_api.router)
+api_router.include_router(shares_api.router)
 api_router.include_router(seed_route.router)
 
 app.include_router(api_router)

@@ -7,8 +7,8 @@ depends only on `generate(kind, ctx, language)`.
 """
 from __future__ import annotations
 from datetime import datetime, timezone
-from typing import Dict, Any
-from emergentintegrations.llm.chat import LlmChat, UserMessage
+from typing import Dict, Any, AsyncIterator
+from emergentintegrations.llm.chat import LlmChat, UserMessage, TextDelta, StreamDone
 from app.core.config import EMERGENT_LLM_KEY
 
 # Gemma is not on the Emergent-hosted list; we use Gemini 3 Flash as the
@@ -70,15 +70,26 @@ async def _call_llm(system: str, user_text: str, session_id: str) -> str:
     return resp if isinstance(resp, str) else str(resp)
 
 
+async def _stream_llm(system: str, user_text: str, session_id: str) -> AsyncIterator[str]:
+    """Yields token deltas. Swap this for Ollama's /api/generate with stream=true
+    to run against a local Gemma model — no other caller needs to change."""
+    chat = LlmChat(
+        api_key=EMERGENT_LLM_KEY,
+        session_id=session_id,
+        system_message=system,
+    ).with_model(_MODEL_PROVIDER, _MODEL_NAME)
+    async for ev in chat.stream_message(UserMessage(text=user_text)):
+        if isinstance(ev, TextDelta):
+            yield ev.content
+        elif isinstance(ev, StreamDone):
+            break
+
+
 async def generate(kind: str, ctx: Dict[str, Any], language: str = "en") -> Dict[str, Any]:
     """Public interface. `kind` must be one of _KIND_PROMPTS keys."""
     if kind not in _KIND_PROMPTS:
         raise ValueError(f"unknown copilot kind: {kind}")
-    system = (
-        "You are TR-Cortex, an AI fraud-investigation assistant for financial "
-        "crime investigators. Be precise, cite provided evidence, never invent "
-        "facts. All output is a DRAFT for human review."
-    )
+    system = _SYSTEM
     user_text = _KIND_PROMPTS[kind] + "\n\n" + _build_prompt(ctx, language)
     session_id = f"case-{ctx.get('case_id','x')}-{kind}-{language}"
     text = await _call_llm(system, user_text, session_id)
@@ -88,3 +99,20 @@ async def generate(kind: str, ctx: Dict[str, Any], language: str = "en") -> Dict
         "text": text.strip(),
         "generated_at": datetime.now(timezone.utc),
     }
+
+
+async def generate_stream(kind: str, ctx: Dict[str, Any], language: str = "en") -> AsyncIterator[str]:
+    """Stream token deltas for a copilot response."""
+    if kind not in _KIND_PROMPTS:
+        raise ValueError(f"unknown copilot kind: {kind}")
+    user_text = _KIND_PROMPTS[kind] + "\n\n" + _build_prompt(ctx, language)
+    session_id = f"case-{ctx.get('case_id','x')}-{kind}-{language}"
+    async for chunk in _stream_llm(_SYSTEM, user_text, session_id):
+        yield chunk
+
+
+_SYSTEM = (
+    "You are TR-Cortex, an AI fraud-investigation assistant for financial "
+    "crime investigators. Be precise, cite provided evidence, never invent "
+    "facts. All output is a DRAFT for human review."
+)

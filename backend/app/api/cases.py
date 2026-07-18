@@ -1,11 +1,11 @@
 """Cases: create, list, get, delete + CSV upload."""
 from datetime import datetime, timezone
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, BackgroundTasks, Form
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, BackgroundTasks
 from app.api.auth import current_user
-from app.core.db import cases_coll, transactions_coll, risk_coll
+from app.core.db import cases_coll, transactions_coll, risk_coll, get_db
 from app.schemas import Case, CaseCreate, IngestResponse, Transaction
-from app.services import ingestion, risk_scoring
+from app.services import ingestion, risk_scoring, rbac, audit
 import uuid
 
 router = APIRouter(prefix="/cases", tags=["cases"])
@@ -63,6 +63,7 @@ async def create_case(
         "tx_count": 0,
     }
     await cases_coll().insert_one(case)
+    await audit.record(case_id, user, "case_created", {"subject": payload.subject})
     if payload.transactions:
         await ingestion.ingest(case_id, payload.transactions)
         background.add_task(_rescore_case, case_id)
@@ -71,8 +72,10 @@ async def create_case(
 
 @router.get("", response_model=List[Case])
 async def list_cases(user: dict = Depends(current_user)):
-    docs = await cases_coll().find({"owner_id": user["user_id"]}, {"_id": 0}) \
-        .sort("reported_at", -1).to_list(500)
+    # Owned + shared cases
+    shared_ids = await rbac.list_accessible_case_ids(user["user_id"])
+    q = {"$or": [{"owner_id": user["user_id"]}, {"case_id": {"$in": shared_ids}}]}
+    docs = await cases_coll().find(q, {"_id": 0}).sort("reported_at", -1).to_list(500)
     out = []
     for d in docs:
         if isinstance(d.get("reported_at"), str):
@@ -83,11 +86,7 @@ async def list_cases(user: dict = Depends(current_user)):
 
 @router.get("/{case_id}", response_model=Case)
 async def get_case(case_id: str, user: dict = Depends(current_user)):
-    d = await cases_coll().find_one(
-        {"case_id": case_id, "owner_id": user["user_id"]}, {"_id": 0}
-    )
-    if not d:
-        raise HTTPException(404, "Case not found")
+    d, _role = await rbac.load_case_with_role(case_id, user, "viewer")
     if isinstance(d.get("reported_at"), str):
         d["reported_at"] = datetime.fromisoformat(d["reported_at"])
     return Case(**d)
@@ -95,11 +94,14 @@ async def get_case(case_id: str, user: dict = Depends(current_user)):
 
 @router.delete("/{case_id}")
 async def delete_case(case_id: str, user: dict = Depends(current_user)):
-    r = await cases_coll().delete_one({"case_id": case_id, "owner_id": user["user_id"]})
-    if r.deleted_count == 0:
-        raise HTTPException(404, "Case not found")
+    # Only owner can delete
+    await rbac.load_case_with_role(case_id, user, "owner")
+    await cases_coll().delete_one({"case_id": case_id})
     await transactions_coll().delete_many({"case_id": case_id})
     await risk_coll().delete_one({"case_id": case_id})
+    db = get_db()
+    await db.case_shares.delete_many({"case_id": case_id})
+    await audit.record(case_id, user, "case_deleted")
     return {"ok": True}
 
 
@@ -110,16 +112,13 @@ async def upload_csv(
     file: UploadFile = File(...),
     user: dict = Depends(current_user),
 ):
-    # ensure ownership
-    d = await cases_coll().find_one(
-        {"case_id": case_id, "owner_id": user["user_id"]}, {"_id": 0}
-    )
-    if not d:
-        raise HTTPException(404, "Case not found")
+    await rbac.load_case_with_role(case_id, user, "analyst")
     raw = await file.read()
     rows, errors = ingestion.parse_csv(raw)
     resp = await ingestion.ingest(case_id, rows)
     background.add_task(_rescore_case, case_id)
+    await audit.record(case_id, user, "csv_uploaded",
+                       {"filename": file.filename, "accepted": resp.accepted, "rejected": len(errors)})
     return IngestResponse(
         case_id=case_id, accepted=resp.accepted,
         rejected=len(errors), errors=errors[:10],
@@ -128,11 +127,7 @@ async def upload_csv(
 
 @router.get("/{case_id}/transactions", response_model=List[Transaction])
 async def list_transactions(case_id: str, user: dict = Depends(current_user)):
-    d = await cases_coll().find_one(
-        {"case_id": case_id, "owner_id": user["user_id"]}, {"_id": 0}
-    )
-    if not d:
-        raise HTTPException(404, "Case not found")
+    await rbac.load_case_with_role(case_id, user, "viewer")
     txs = await transactions_coll().find({"case_id": case_id}, {"_id": 0}) \
         .sort("date", 1).to_list(10000)
     return [Transaction(**t) for t in txs]

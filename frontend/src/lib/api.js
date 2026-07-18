@@ -54,7 +54,61 @@ export const api = {
     req(`/cases/${id}/copilot`, {
       method: "POST", body: JSON.stringify({ kind, language }),
     }),
+  copilotStream: (id, kind, language, onDelta, onDone, onError) => {
+    const ctrl = new AbortController();
+    fetch(`${API}/cases/${id}/copilot/stream`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ kind, language }),
+      signal: ctrl.signal,
+    })
+      .then(async (r) => {
+        if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+        const reader = r.body.getReader();
+        const decoder = new TextDecoder();
+        let buf = "";
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buf += decoder.decode(value, { stream: true });
+          // Parse SSE frames separated by blank lines
+          let idx;
+          while ((idx = buf.indexOf("\n\n")) !== -1) {
+            const frame = buf.slice(0, idx);
+            buf = buf.slice(idx + 2);
+            let event = "message";
+            let data = "";
+            frame.split("\n").forEach((line) => {
+              if (line.startsWith("event:")) event = line.slice(6).trim();
+              else if (line.startsWith("data:")) data += line.slice(5).trim();
+            });
+            if (!data) continue;
+            try {
+              const parsed = JSON.parse(data);
+              if (event === "done") { onDone?.(parsed.text || ""); }
+              else if (event === "error") { onError?.(parsed.error || "stream error"); }
+              else if (parsed.delta) { onDelta?.(parsed.delta); }
+            } catch { /* ignore malformed */ }
+          }
+        }
+      })
+      .catch((e) => {
+        if (e.name !== "AbortError") onError?.(e.message);
+      });
+    return () => ctrl.abort();
+  },
   reportUrl: (id) => `${API}/cases/${id}/report`,
+
+  // Sharing + audit
+  listShares: (id) => req(`/cases/${id}/shares`),
+  addShare: (id, email, role) =>
+    req(`/cases/${id}/shares`, { method: "POST", body: JSON.stringify({ email, role }) }),
+  removeShare: (id, shareId) =>
+    req(`/cases/${id}/shares/${shareId}`, { method: "DELETE" }),
+  changeStatus: (id, status) =>
+    req(`/cases/${id}/status`, { method: "PATCH", body: JSON.stringify({ status }) }),
+  getAudit: (id) => req(`/cases/${id}/audit`),
 };
 
 export { API, BACKEND_URL };

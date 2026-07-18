@@ -2,11 +2,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { ArrowLeft, Download, ShieldAlert, Sparkles, Activity, Network, ClipboardCheck, Loader2 } from "lucide-react";
+import { ArrowLeft, Download, ShieldAlert, Sparkles, Activity, Network, ClipboardCheck, Loader2, Users, ClipboardList } from "lucide-react";
 import { api } from "@/lib/api";
 import { CaseGraph } from "@/features/graph/CaseGraph";
 import { CopilotPanel } from "@/features/copilot/CopilotPanel";
 import { CaseTimeline } from "@/features/timeline/CaseTimeline";
+import { SharingPanel } from "@/features/sharing/SharingPanel";
+import { AuditPanel } from "@/features/audit/AuditPanel";
 
 const RISK_META = {
   freeze:  { label: "Freeze Immediately", chip: "bg-red-500/10 border-red-500/30 text-red-300", text: "text-red-300", dot: "bg-red-400" },
@@ -68,11 +70,13 @@ export const CaseWorkspace = () => {
   const meta = RISK_META[risk.risk] || RISK_META.safe;
 
   const tabs = [
-    { k: "graph",     label: "Graph",         icon: <Network className="w-3.5 h-3.5" /> },
-    { k: "risk",      label: "Risk",          icon: <ShieldAlert className="w-3.5 h-3.5" /> },
-    { k: "copilot",   label: "Copilot",       icon: <Sparkles className="w-3.5 h-3.5" /> },
-    { k: "timeline",  label: "Timeline",      icon: <Activity className="w-3.5 h-3.5" /> },
+    { k: "graph",     label: "Graph",           icon: <Network className="w-3.5 h-3.5" /> },
+    { k: "risk",      label: "Risk",            icon: <ShieldAlert className="w-3.5 h-3.5" /> },
+    { k: "copilot",   label: "Copilot",         icon: <Sparkles className="w-3.5 h-3.5" /> },
+    { k: "timeline",  label: "Timeline",        icon: <Activity className="w-3.5 h-3.5" /> },
     { k: "recs",      label: "Recommendations", icon: <ClipboardCheck className="w-3.5 h-3.5" /> },
+    { k: "sharing",   label: "Sharing",         icon: <Users className="w-3.5 h-3.5" /> },
+    { k: "audit",     label: "Audit",           icon: <ClipboardList className="w-3.5 h-3.5" /> },
   ];
 
   return (
@@ -242,6 +246,16 @@ export const CaseWorkspace = () => {
                 </p>
               </section>
             )}
+
+            {tab === "sharing" && (
+              <SharingPanel
+                caseId={c.case_id}
+                currentStatus={c.status}
+                onStatusChange={(s) => setState((prev) => ({ ...prev, case: { ...prev.case, status: s } }))}
+              />
+            )}
+
+            {tab === "audit" && <AuditPanel caseId={c.case_id} />}
           </motion.div>
         </AnimatePresence>
       </div>

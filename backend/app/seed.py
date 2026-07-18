@@ -81,12 +81,20 @@ async def seed_for_user(user_id: str) -> List[str]:
     existing = await cases_coll().count_documents({"owner_id": user_id})
     if existing > 0:
         return []
+    # look up user for audit meta
+    from app.core.db import users_coll
+    from app.services import audit as _audit
+    user_doc = await users_coll().find_one({"user_id": user_id}, {"_id": 0}) or {"user_id": user_id}
     created: List[str] = []
     for factory in (_flash_drain_case, _elder_case, _safe_case):
         case_doc, txs = factory()
         case_doc["owner_id"] = user_id
         await cases_coll().insert_one(case_doc)
+        await _audit.record(case_doc["case_id"], user_doc, "case_created",
+                            {"subject": case_doc["subject"], "seeded": True})
         await ingestion.ingest(case_doc["case_id"], txs)
+        await _audit.record(case_doc["case_id"], user_doc, "csv_uploaded",
+                            {"seeded": True, "accepted": len(txs), "rejected": 0})
         # score inline
         from app.api.cases import _rescore_case
         await _rescore_case(case_doc["case_id"])

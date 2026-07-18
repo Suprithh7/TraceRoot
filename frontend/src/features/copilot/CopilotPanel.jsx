@@ -1,6 +1,6 @@
 // AI Copilot panel — tabs for summary, report, freeze justification, next steps,
 // with a language switcher (EN / HI / TA).
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { Sparkles, Loader2 } from "lucide-react";
 import { api } from "@/lib/api";
@@ -21,20 +21,29 @@ export const CopilotPanel = ({ caseId }) => {
   const [kind, setKind] = useState("summary");
   const [lang, setLang] = useState("en");
   const [loading, setLoading] = useState(false);
+  const [streaming, setStreaming] = useState(false);
   const [texts, setTexts] = useState({}); // { "kind|lang": text }
   const [err, setErr] = useState(null);
+  const abortRef = useRef(null);
 
   const cacheKey = `${kind}|${lang}`;
   const text = texts[cacheKey];
 
-  const generate = async () => {
-    setLoading(true); setErr(null);
-    try {
-      const r = await api.copilot(caseId, kind, lang);
-      setTexts((prev) => ({ ...prev, [cacheKey]: r.text }));
-    } catch (e) {
-      setErr(e.message);
-    } finally { setLoading(false); }
+  useEffect(() => () => { abortRef.current?.(); }, []);
+
+  const generate = () => {
+    setLoading(true); setStreaming(true); setErr(null);
+    setTexts((prev) => ({ ...prev, [cacheKey]: "" }));
+    abortRef.current?.();
+    abortRef.current = api.copilotStream(
+      caseId, kind, lang,
+      (delta) => setTexts((prev) => ({ ...prev, [cacheKey]: (prev[cacheKey] || "") + delta })),
+      (fullText) => {
+        setTexts((prev) => ({ ...prev, [cacheKey]: fullText || prev[cacheKey] || "" }));
+        setLoading(false); setStreaming(false);
+      },
+      (msg) => { setErr(msg); setLoading(false); setStreaming(false); },
+    );
   };
 
   return (
@@ -92,14 +101,14 @@ export const CopilotPanel = ({ caseId }) => {
       </div>
 
       <motion.div
-        key={cacheKey + (text ? "1" : "0") + (loading ? "l" : "d")}
+        key={cacheKey + (streaming ? "s" : "d")}
         initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }}
         className="min-h-[160px] rounded-xl bg-black/40 border border-white/5 p-5 text-[15px] leading-[1.75] text-white/85 whitespace-pre-wrap"
         data-testid="copilot-output"
       >
         {err && <span className="text-red-300 font-mono text-xs">Error: {err}</span>}
         {!err && !text && !loading && (
-          <span className="text-white/40 text-sm">Click <b>Generate</b> to run the AI copilot for this case.</span>
+          <span className="text-white/40 text-sm">Click <b>Generate</b> to stream an AI response for this case.</span>
         )}
         {!err && !text && loading && (
           <span className="text-white/40 text-sm flex items-center gap-2">
@@ -107,6 +116,9 @@ export const CopilotPanel = ({ caseId }) => {
           </span>
         )}
         {text}
+        {streaming && text && (
+          <span className="inline-block w-2 h-4 ml-0.5 bg-white/70 align-middle animate-pulse" />
+        )}
       </motion.div>
 
       {kind === "freeze_justification" && text && (
